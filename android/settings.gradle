@@ -4,3 +4,6 @@ extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autoli
 rootProject.name = 'smartw'
 include ':app'
 includeBuild('../node_modules/@react-native/gradle-plugin')
+include ':react-native-udp'
+project(':react-native-udp').projectDir = new File(rootProject.projectDir, '../node_modules/react-native-udp/android')
+

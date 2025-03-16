@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <!-- Разрешить небезопасное соединение по HTTP для всех доменов и IP-адресов -->
+    </base-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- Разрешить небезопасное соединение по HTTP с IP-адресом 192.168.4.1 -->
+        <domain includeSubdomains="true">192.168.0.144</domain>
+    </domain-config>
+</network-security-config>
