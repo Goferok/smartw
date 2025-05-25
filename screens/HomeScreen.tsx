@@ -6,13 +6,14 @@ import {
   FlatList,
   StyleSheet,
   Alert,
-  ActivityIndicator} from "react-native";
+  ActivityIndicator,
+  ScrollView} from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useNavigation } from "@react-navigation/native"; // Импортируем useNavigation
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import dgram from "react-native-udp";
 import { RootStackParamList } from "../AppNavigator"; // Импортируем тип из AppNavigator
-
+import { NetworkInfo } from "react-native-network-info";
 // ✅ ТИП ДАННЫХ УСТРОЙСТВА
 type Device = {
   name: string;
@@ -27,15 +28,13 @@ type HomeScreenProps = {
 };
 
 const HomeScreen = ({ updateSelectedDevice }: HomeScreenProps) => {
-  
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [devices, setDevices] = useState<Device[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<string | null>(null);
-  const devicesRef = useRef<Device[]>([]); // ✅ Храним актуальный список устройств
   const [searchStatus, setSearchStatus] = useState<string>("");
   const [isScanning, setIsScanning] = useState<boolean>(false);
-  const [subnet, setSubnet] = useState<string | null>(null);
   const socketRef = useRef<ReturnType<typeof dgram.createSocket> | null>(null);
+  const [isConnected, setIsConnected] = useState<boolean | null>(null);
   const selectDevice = async (deviceIp: string) => {
     if (!deviceIp) {
       showDeviceNotSelectedAlert();
@@ -46,13 +45,25 @@ const HomeScreen = ({ updateSelectedDevice }: HomeScreenProps) => {
     setSelectedDevice(deviceIp); // Обновляем локальное состояние
     navigation.navigate("Modes", { deviceIp }); // Переходим на экран Modes
 };
+
+useEffect(() => {
+  NetworkInfo.getSSID().then(ssid => {
+    if (!ssid) {
+      Alert.alert(
+        "Нет подключения к Wi-Fi",
+        "Пожалуйста, подключитесь к сети Wi-Fi для работы приложения.",
+        [{ text: "OK" }]
+      );
+    }
+  });
+}, []);
 // ✅ Загружаем устройства только один раз при монтировании
 useEffect(() => {
   AsyncStorage.removeItem("selectedDevice");
   setSelectedDevice(null);
   loadDevices();
 }, []);
-
+// Функция плавного обновления значения слайдера
 
 // Проверка и сортировка устройств
 useEffect(() => {
@@ -77,7 +88,6 @@ useEffect(() => {
   return () => clearInterval(interval);
 }, []);
 
-  
     // 📌 Загружаем последнее выбранное устройство при старте
 useEffect(() => {
     const loadSelectedDevice = async () => {
@@ -120,8 +130,7 @@ useEffect(() => {
     return () => {
       socket.close();
     };
-  }, []);
-  
+  }, []); 
 // 📡 Функция обработки UDP-сообщений для обновления имени и расположения
 const startListeningForDeviceInfoUpdates = () => {
   if (socketRef.current) {
@@ -197,7 +206,6 @@ const startListeningForDeviceInfoUpdates = () => {
 
   socketRef.current = socket;
 };
-
 // 🟢 Стартуем слушатель UDP при монтировании HomeScreen
 useEffect(() => {
   startListeningForDeviceInfoUpdates();
@@ -236,80 +244,67 @@ useEffect(() => {
     }
   };
   // ✅ Поиск устройств
+// ✅ Поиск устройств (новая версия)
 const fetchDevices = async () => {
   if (isScanning) {
-    console.log("⚠️ Поиск уже выполняется, дождитесь завершения.");
+    console.log("⚠️ Поиск уже выполняется.");
     return;
   }
 
   setIsScanning(true);
   setSearchStatus("📡 Поиск устройств в сети...");
-  console.log("📡 Начинаем слушать UDP-сообщения от ESP32...");
 
   const socket = dgram.createSocket({ type: "udp4", reusePort: true });
-
   socket.bind(4210);
 
-  // 🛑 Временный список устройств, ожидающих обновления данных
-  let pendingDevices: Record<string, Device> = {};
+  const discoveredIps = new Set(devices.map((d) => d.ip));
 
-  socket.on("message", async (msg, rinfo) => {
+  socket.on("message", (msg, rinfo) => {
     try {
-      const message = msg.toString();
+      const message = msg.toString().trim();
       console.log(`📡 [UDP] Получено: ${message} от ${rinfo.address}:${rinfo.port}`);
 
-      if (message.startsWith("ESP_KEEP_ALIVE:")) {
-        const deviceIp = message.split(":")[1];
+      // Игнорируем сообщения, не начинающиеся с JSON
+      if (!message.startsWith("{")) return;
 
-        setDevices((prevDevices) => {
-          const existingDevice = prevDevices.find((dev) => dev.ip === deviceIp);
+      const data = JSON.parse(message);
 
-          if (existingDevice) {
-            // 🔄 Обновляем статус существующего устройства
-            const updatedDevices = prevDevices.map((device) =>
-              device.ip === deviceIp ? { ...device, status: "Online", lastSeen: Date.now() } : device
-            );
+      if ("ip" in data && "deviceName" in data && "deviceLocation" in data) {
+        const deviceIp = data.ip;
+
+        if (discoveredIps.has(deviceIp)) {
+          // Обновляем уже найденное устройство
+          setDevices((prevDevices) =>
+            prevDevices.map((device) =>
+              device.ip === deviceIp
+                ? {
+                    ...device,
+                    status: "Online",
+                    lastSeen: Date.now(),
+                    name: data.deviceName,
+                    location: data.deviceLocation,
+                  }
+                : device
+            )
+          );
+        } else {
+          // Добавляем новое устройство
+          const newDevice: Device = {
+            ip: deviceIp,
+            name: data.deviceName,
+            location: data.deviceLocation,
+            status: "Online",
+            lastSeen: Date.now(),
+          };
+
+          setDevices((prevDevices) => {
+            const updatedDevices = [...prevDevices, newDevice];
             AsyncStorage.setItem("devices", JSON.stringify(updatedDevices));
             return updatedDevices;
-          } else {
-            // 🆕 Добавляем устройство в pending, если его еще нет
-            if (!pendingDevices[deviceIp]) {
-              pendingDevices[deviceIp] = {
-                ip: deviceIp,
-                name: "Загрузка...",
-                location: "Загрузка...",
-                status: "Online",
-                lastSeen: Date.now(),
-              };
+          });
 
-              // 🕐 Загружаем информацию о новом устройстве
-              (async () => {
-                try {
-                  const response = await fetch(`http://${deviceIp}/getDeviceInfo`);
-                  if (response.ok) {
-                    const data = await response.json();
-                    pendingDevices[deviceIp].name = data.deviceName || "ESP32";
-                    pendingDevices[deviceIp].location = data.deviceLocation || "Не указано";
-
-                    // ✅ Только теперь добавляем в devices
-                    setDevices((currentDevices) => {
-                      const finalDevices = [
-                        ...currentDevices.filter((d) => d.ip !== deviceIp),
-                        pendingDevices[deviceIp],
-                      ];
-                      AsyncStorage.setItem("devices", JSON.stringify(finalDevices));
-                      return finalDevices;
-                    });
-                  }
-                } catch (error) {
-                  console.warn(`⚠️ Ошибка загрузки информации для устройства ${deviceIp}:`, error);
-                }
-              })();
-            }
-          }
-
-          return prevDevices;
-        });
+          discoveredIps.add(deviceIp);
+        }
       }
     } catch (error) {
       console.error("⛔ Ошибка обработки UDP-сообщения:", error);
@@ -322,13 +317,15 @@ const fetchDevices = async () => {
   });
 
   setTimeout(() => {
-    console.log("✅ Поиск завершен.");
     setSearchStatus("✅ Поиск завершён!");
     setIsScanning(false);
     socket.close();
     setTimeout(() => setSearchStatus(""), 5000);
   }, 15000);
 };
+
+
+
 
   
 const removeDevice = (ip: string) => {
@@ -352,56 +349,60 @@ const removeDevice = (ip: string) => {
 
 
   
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Искусственное окно v.1.0</Text>
+return (
+  <View style={styles.container}>
+    <Text style={styles.title}>Lumi</Text>
+    <Text style={styles.titlesmall}>управление исскуственным окном</Text>
 
-      <TouchableOpacity style={styles.searchButton} onPress={fetchDevices} disabled={isScanning}>
-        {isScanning ? <ActivityIndicator color="black" /> : <Text style={styles.searchButtonText}>🔍 Поиск устройств</Text>}
-      </TouchableOpacity>
+    <TouchableOpacity style={styles.searchButton} onPress={fetchDevices} disabled={isScanning}>
+      {isScanning ? <ActivityIndicator color="black" /> : <Text style={styles.searchButtonText}>🔍 Поиск устройств</Text>}
+    </TouchableOpacity>
 
-      {searchStatus ? <Text style={styles.statusText}>{searchStatus}</Text> : null}
+    {searchStatus ? <Text style={styles.statusText}>{searchStatus}</Text> : null}
 
-      <View style={styles.devicesContainer}>
-        <Text style={styles.devicesHeader}>Найденные устройства</Text>
+    {/* 🔥 Делаем список устройств прокручиваемым */}
+    <View style={styles.devicesContainer}>
+      <Text style={styles.devicesHeader}>Найденные устройства</Text>
 
+      <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
         <FlatList
-  data={devices}
-  keyExtractor={(item) => item.ip}
-  renderItem={({ item }) => (
-    <View style={[styles.deviceCard, item.status === "Offline" && styles.deviceCardOffline, selectedDevice === item.ip && styles.deviceCardSelected,]}>
-      
-      {/* Кнопка удаления (❌) */}
-      <TouchableOpacity
-        style={styles.deleteButton}
-        onPress={() => removeDevice(item.ip)}
-      >
-        <Text style={styles.deleteButtonText}>✖</Text>
-      </TouchableOpacity>
+          data={devices}
+          keyExtractor={(item) => item.ip}
+          renderItem={({ item }) => (
+            <View
+              style={[
+                styles.deviceCard,
+                item.status === "Offline" && styles.deviceCardOffline,
+                selectedDevice === item.ip && styles.deviceCardSelected,
+              ]}
+            >
+              {/* Кнопка удаления (❌) */}
+              <TouchableOpacity style={styles.deleteButton} onPress={() => removeDevice(item.ip)}>
+                <Text style={styles.deleteButtonText}>✖</Text>
+              </TouchableOpacity>
 
-      {/* Контейнер с информацией */}
-      <TouchableOpacity
-        style={styles.deviceInfoContainer}
-        onPress={() => selectDevice(item.ip)}
-        disabled={item.status === "Offline"}
-      >
-        <Text style={styles.deviceName}>{item.name}</Text>
-        <Text style={styles.deviceText}>{item.location}</Text>
-        <Text style={styles.deviceText}>{item.ip}</Text>
-        <Text style={[styles.onlineText, item.status === "Offline" && styles.offlineText]}>
-          {item.status}
-        </Text>
-      </TouchableOpacity>
-
+              {/* Контейнер с информацией */}
+              <TouchableOpacity
+                style={styles.deviceInfoContainer}
+                onPress={() => selectDevice(item.ip)}
+                disabled={item.status === "Offline"}
+              >
+                <Text style={styles.deviceName}>{item.name}</Text>
+                <Text style={styles.deviceText}>{item.location}</Text>
+                <Text style={styles.deviceText}>{item.ip}</Text>
+                <Text style={[styles.onlineText, item.status === "Offline" && styles.offlineText]}>
+                  {item.status}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          ListEmptyComponent={<Text style={styles.noDevices}>Нет найденных устройств</Text>}
+          scrollEnabled={false} // ✅ Отключаем встроенный скролл
+        />
+      </ScrollView>
     </View>
-  )}
-  ListEmptyComponent={<Text style={styles.noDevices}>Нет найденных устройств</Text>}
-/>
-
-
-    </View>
-    </View>
-  );
+  </View>
+);
 };
 
 const styles = StyleSheet.create({
@@ -413,15 +414,24 @@ const styles = StyleSheet.create({
       paddingHorizontal: 20,
     },
     title: {
-      fontSize: 24,
+      fontSize: 36,
       fontWeight: "bold",
+      textAlign: "center",
       color: "#EAEAEA",
+      marginBottom: 0,
+    },
+    titlesmall: {
+      fontSize: 18,
+      fontWeight: "bold",
+      textAlign: "center",
+      color: "#bbb",
+      //color: "#EAEAEA",
       marginBottom: 20,
     },
     searchButton: {
       width: "100%",
       height: 50,
-      backgroundColor: "#FBC02D",
+      backgroundColor: "#f9c154",
       justifyContent: "center",
       alignItems: "center",
       borderRadius: 10,
@@ -503,7 +513,7 @@ const styles = StyleSheet.create({
       deviceSelectionMarker: {
         width: 8, // ✅ Толщина выделения
         height: "100%",
-        backgroundColor: "#FBC02D", // ✅ Цвет выделения
+        backgroundColor: "#f9c154", // ✅ Цвет выделения
         borderTopRightRadius: 0,
         borderBottomRightRadius: 0,
       },
@@ -528,10 +538,20 @@ const styles = StyleSheet.create({
         lineHeight: 18,  // Должно быть равно высоте кнопки
       },
   deviceCardSelected: {
-    borderColor: "#FBC02D", // Ярко-зелёный цвет рамки
+    borderColor: "#f9c154", // Ярко-зелёный цвет рамки
     borderWidth: 2, // Увеличиваем толщину границы
   },
-      
+  text: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 10,
+  },
+  label: {
+    fontSize: 18,
+    marginBottom: 10,
+    fontWeight: "bold",
+    color: "#EAEAEA",
+  },
   });
   
   

@@ -1,0 +1,5 @@
+<resources>
+    <color name="bootsplash_background">#ffffff</color>
+    <color name="white">#FFFFFF</color>
+    <color name="splash_background">#A8E6CF</color> <!-- светло-зелёный, как фон в интерфейсе -->
+</resources>

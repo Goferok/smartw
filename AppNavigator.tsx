@@ -84,7 +84,7 @@ function MainTabs({ selectedDevice, updateSelectedDevice }: MainTabsProps) {
 
           return <Ionicons name={iconName} size={size} color={color} />;
         },
-        tabBarActiveTintColor: "#FBC02D",
+        tabBarActiveTintColor: "#f9c154",
         tabBarInactiveTintColor: "gray",
         tabBarStyle: { backgroundColor: "#282A36" },
         headerShown: false,

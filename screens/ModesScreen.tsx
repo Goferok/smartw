@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useRef } from "react";
-import { View, Text, TouchableOpacity, Switch, StyleSheet, FlatList, ActivityIndicator } from "react-native";
+import { View, Text, TouchableOpacity, Switch, StyleSheet, FlatList, ActivityIndicator,SafeAreaView, ScrollView, TouchableWithoutFeedback, Modal,Pressable } from "react-native";
 import Slider from "@react-native-community/slider";
-//import CircularSlider from 'react-native-circular-slider';
 import { useNavigation, useRoute, useFocusEffect, RouteProp } from "@react-navigation/native"; // Импортируем RouteProp
 import Icon from "react-native-vector-icons/Ionicons";
 import dgram from "react-native-udp";
 import { RootStackParamList } from "../AppNavigator"; // Импортируем тип из AppNavigator
+
+
 
 
 
@@ -51,7 +52,18 @@ export default function ModesScreen() {
   const [loading, setLoading] = useState(false);
   const lastSelectedMode = useRef<string | null>(null);
   const socketRef = useRef<ReturnType<typeof dgram.createSocket> | null>(null);
-
+  const [autoMode, setAutoMode] = useState(false);
+  const [showHoldModal, setShowHoldModal] = useState(false);
+  const [showAutoModeModal, setShowAutoModeModal] = useState(false);
+  const handleConfirmManualMode = () => {
+    setShowAutoModeModal(false);
+    toggleHoldMode(true); // активирует holdCurrentModeUntilEndOfDay
+  };
+  const handleUIInteraction = () => {
+    if (autoMode && !holdMode) {
+      setShowAutoModeModal(true);
+    }
+  };
   useFocusEffect(
     React.useCallback(() => {
       fetchAllDeviceData(true); // ✅ Загружаем данные с индикатором при входе
@@ -59,8 +71,14 @@ export default function ModesScreen() {
   );
 // 🟢 Следим за изменением `pwmValues` и определяем режим
 useEffect(() => {
-  detectPresetMode(pwmValues);
-}, [pwmValues]);
+  if (relayState) {
+    detectPresetMode(pwmValues, relayState);
+  } else {
+    setSelectedMode(""); // если окно выключено — явно сбрасываем режим
+  }
+}, [pwmValues, relayState]);
+
+
 
   /* 🔄 Автообновление данных каждые 5 секунд
   useEffect(() => {
@@ -73,11 +91,15 @@ useEffect(() => {
   // 🟢 Добавляем проверку на наличие deviceIp
 
   const selectMode = (mode: typeof sunlightModes[number]) => {
-    lastSelectedMode.current = mode.name; // 🟢 Запоминаем последний режим
+    if (!relayState) {
+      toggleRelay(); // Включаем окно
+    }
+    lastSelectedMode.current = mode.name;
     setSelectedMode(mode.name);
     setPwmValues(mode.pwm);
     sendPWMValues(mode.pwm);
   };
+  
   //Отправка состояния Hold на ESP32
   const toggleHoldMode = async (newState: boolean) => {
     setHoldMode(newState); // ✅ Обновляем состояние UI
@@ -101,7 +123,12 @@ useEffect(() => {
   };
   
   // 🟢 Функция проверки совпадения режима с текущими PWM
-  const detectPresetMode = (currentPWM: PWMValues) => {
+  const detectPresetMode = (currentPWM: PWMValues, isRelayOn: boolean) => {
+    if (!isRelayOn) {
+      setSelectedMode(""); // ❌ Не выделяем режим
+      return;
+    }
+  
     const foundMode = sunlightModes.find((mode) =>
       Object.keys(mode.pwm).every(
         (key) =>
@@ -110,15 +137,28 @@ useEffect(() => {
     );
   
     if (foundMode) {
-      setSelectedMode(foundMode.name); // ✅ Включаем режим, если совпадает
+      setSelectedMode(foundMode.name);
     } else {
-      setSelectedMode(""); // ❌ Отключаем режим, если не совпадает
+      setSelectedMode("");
       lastSelectedMode.current = null;
     }
   };
   
+  const calculatePowerConsumption = () => {
+    if (!relayState) return 0; // Если окно выключено → 0 Вт
+  
+    const powerPerChannel = 64; // 100% яркость = 64 Вт
+    const totalPower =
+      (pwmValues.pwm3000K / 255) * powerPerChannel +
+      (pwmValues.pwm4000K / 255) * powerPerChannel +
+      (pwmValues.pwm5000K / 255) * powerPerChannel +
+      (pwmValues.pwm5700K / 255) * powerPerChannel;
+  
+    return Math.round(totalPower); // Округляем до целого числа
+  };
+  
 
-
+  
 
   // 📡 Функция обработки UDP-сообщений
   const startListeningForUpdates = () => {
@@ -200,30 +240,32 @@ useEffect(() => {
 }, [deviceIp]);
 
 
-  const fetchAllDeviceData = async (showLoading = false) => {
-    if (showLoading) setLoading(true);
+const fetchAllDeviceData = async (showLoading = false) => {
+  if (showLoading) setLoading(true);
 
-    try {
-      const [pwmRes, relayRes, infoRes] = await Promise.all([
-        fetch(`http://${deviceIp}/getPWM`).then((res) => res.json()),
-        fetch(`http://${deviceIp}/getRelayState`).then((res) => res.json()),
-        fetch(`http://${deviceIp}/getDeviceInfo`).then((res) => res.json()),
-      ]);
+  try {
+    const [pwmRes, relayRes, infoRes, autoRes] = await Promise.all([
+      fetch(`http://${deviceIp}/getPWM`).then((res) => res.json()),
+      fetch(`http://${deviceIp}/getRelayState`).then((res) => res.json()),
+      fetch(`http://${deviceIp}/getDeviceInfo`).then((res) => res.json()),
+      fetch(`http://${deviceIp}/getAutoMode`).then((res) => res.json()),
+    ]);
 
-      setPwmValues(pwmRes);
-      setRelayState(relayRes.relayState === "on");
-      setDeviceName(infoRes.device_name || "ESP32-Device");
-      setDeviceLocation(infoRes.device_location || "Не указано");
+    setPwmValues(pwmRes);
+    setRelayState(relayRes.relayState === "on");
+    setDeviceName(infoRes.device_name || "ESP32-Device");
+    setDeviceLocation(infoRes.device_location || "Не указано");
+    setAutoMode(autoRes.autoMode === true);
 
-      if (relayRes.relayState === "off") {
-        setSelectedMode(""); // ❌ Сбрасываем предустановленный режим
-      }
-    } catch (error) {
-      console.error("⛔ Ошибка при получении данных с устройства:", error);
+    if (relayRes.relayState === "off") {
+      setSelectedMode("");
     }
+  } catch (error) {
+    console.error("⛔ Ошибка при получении данных с устройства:", error);
+  }
 
-    if (showLoading) setLoading(false);
-  };
+  if (showLoading) setLoading(false);
+};
 
   const toggleRelay = async () => {
     const newState = !relayState;
@@ -260,122 +302,177 @@ useEffect(() => {
   const [tempPwmValues, setTempPwmValues] = useState<PWMValues>(pwmValues); // Временные значения для плавности
   
   return (
-    
-    <View style={styles.container}>
-      <Text style={styles.header}>Выбор режима освещения</Text>
-
-      {loading ? (
-        <ActivityIndicator size="large" color="#FBC02D" style={styles.loadingIndicator} />
-      ) : (
-        <>
-        {/* 🟢 Имя устройства и расположение */}
-      <Text style={styles.deviceInfo}>{deviceName} - {deviceLocation}</Text>
-
-      <TouchableOpacity style={[styles.button, relayState ? styles.buttonOn : styles.buttonOff]} onPress={toggleRelay}>
-        <Icon name={relayState ? "moon-outline" : "sunny-outline"} size={32} color={relayState ? "black" : "#EAEAEA"} />
-        <Text style={[styles.buttonText, { color: relayState ? "#000" : "#FBC02D" }]}>{relayState ? "Выключить окно" : "Включить окно"} </Text>
-      </TouchableOpacity>
-{/* 🔥 Область, которая становится неактивной при выключении окна */}
-<View style={[styles.disabledContainer, !relayState && styles.inactive]}>
-      {/* 🟢 Контейнер для режимов */}
-<View style={styles.modesContainer}>
-  <FlatList
-    data={sunlightModes}
-    numColumns={2}
-    keyExtractor={(item) => item.name}
-    renderItem={({ item }) => (
-        <TouchableOpacity
-        style={[styles.modeButton, selectedMode === item.name && styles.selectedMode]}
-        onPress={() => {
-          setSelectedMode(item.name);
-          setPwmValues(item.pwm);
-          sendPWMValues(item.pwm); // Отправляем значения сразу
-        }}
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#1E1E2E", paddingTop: 50 }}>
+      <ScrollView
+        contentContainerStyle={{ flexGrow: 1, paddingBottom: 20 }}
+        keyboardShouldPersistTaps="handled"
       >
-        <Text style={[styles.modeText, { color: selectedMode === item.name ? "#222" : "#fff" }]}>
-          {item.name}
-        </Text>
-      </TouchableOpacity>
-      
-    )}
-    columnWrapperStyle={styles.row}
-  />
-</View>
-
-   {/* 🔥 Слайдеры управления PWM */}
-<View style={styles.modesContainer}>
-  {Object.keys(pwmValues).map((channel) => {
-    const percentage = Math.round((pwmValues[channel as keyof PWMValues] / 255) * 100);
-    const sliderValue = pwmValues[channel as keyof PWMValues]; // Текущее значение PWM
-
-    return (
-      <View key={channel} style={styles.sliderWrapper}>
-        
-        {/* 🔥 Исправленный текст: убрано дублирование "К", % выровнен вправо */}
-        <View style={styles.sliderLabelContainer}>
-          <Text style={styles.sliderLabel}>{channel.replace("pwm", "")}K</Text>
-          <Text style={styles.sliderLabel}>{percentage}%</Text>
-        </View>
-
-        {/* 🔥 Увеличенный слайдер */}
-        <View>
-        <Slider
-  minimumValue={0}
-  maximumValue={255}
-  step={13}
-  value={pwmValues[channel as keyof PWMValues] || 0} // 🛠 Добавлен fallback (если undefined, то 0)
-  onSlidingComplete={(value) => {
-    const roundedValue = Math.round(value); // 🔥 Округляем значение
-    const newPwmValues = { ...pwmValues, [channel]: roundedValue };
-    setPwmValues(newPwmValues); // ✅ Обновляем состояние только после отпускания
-    sendPWMValues(newPwmValues); // ✅ Отправляем значения на контроллер
+        <Text style={styles.header}>Выбор режима освещения</Text>
+  
+        {loading ? (
+          <ActivityIndicator size="large" color="#f9c154" style={styles.loadingIndicator} />
+        ) : (
+          <>
+            <View style={styles.deviceInfoContainer}>
+              <Text style={styles.deviceInfo}>{deviceName} - {deviceLocation}</Text>
+              <Text style={styles.powerConsumption}>
+                🔋 {relayState ? `Потребление: ${calculatePowerConsumption()} Вт` : "Потребление 0 Вт"}
+              </Text>
+            </View>
+            {/* 🔘 Маска при автоматическом режиме */}
+            <Pressable
+  onPress={() => {
+    if (autoMode && !holdMode) setShowHoldModal(true);
   }}
-  minimumTrackTintColor={sliderColors[channel as keyof typeof sliderColors]}
-  maximumTrackTintColor="#282A36"
-  thumbTintColor={relayState ? "#FBC02D" : "#666"}
-  disabled={!relayState}
-  style={styles.slider}
-/>
+>
+  <View style={[styles.disabledContainer, (autoMode && !holdMode) && styles.inactive]}>
+            <TouchableOpacity
+              style={[styles.button, relayState ? styles.buttonOn : styles.buttonOff]}
+              onPress={toggleRelay}
+            >
+              <Icon
+                name={relayState ? "moon-outline" : "sunny-outline"}
+                size={32}
+                color={relayState ? "black" : "#EAEAEA"}
+              />
+              <Text style={[styles.buttonText, { color: relayState ? "#000" : "#f9c154" }]}>
+                {relayState ? "Выключить окно" : "Включить окно"}
+              </Text>
+            </TouchableOpacity>
+  
+            {holdMode && (
+              <TouchableOpacity
+                onPress={() => toggleHoldMode(false)}
+                style={[styles.button, { backgroundColor: "#333", marginTop: -5 }]}
+              >
+                <Text style={[styles.buttonText, { color: "#f9c154" }]}>Выключить ручной режим</Text>
+              </TouchableOpacity>
+            )}
 
-
-        </View>
-      </View>
-    );
-  })}
-</View>
-
-      <View style={styles.switchContainer}>
-        <Text style={styles.deviceInfo}>Ручной режим до завтра</Text>
-        <Switch 
-  value={holdMode} 
-  onValueChange={toggleHoldMode} // ✅ Теперь отправляем данные на контроллер
-  thumbColor={holdMode ? "#FBC02D" : "#666"}
-  trackColor={{ false: "#282A36", true: "#FBC02D" }}
-  ios_backgroundColor="#282A36"
-/>
-        </View>
-        </View>
-        </>
-        
-      )}
-    </View>
+                {/* FlatList с режимами */}
+                <View style={styles.modesContainer}>
+                  <FlatList
+                    data={sunlightModes}
+                    numColumns={2}
+                    keyExtractor={(item) => item.name}
+                    renderItem={({ item }) => (
+                      <TouchableOpacity
+                        style={[styles.modeButton, selectedMode === item.name && styles.selectedMode]}
+                        onPress={async () => {
+                          if (!relayState) {
+                            try {
+                              const res = await fetch(`http://${deviceIp}/setRelay?state=on`, { method: "POST" });
+                              if (res.ok) {
+                                setRelayState(true); // 🔄 Обновляем реле
+                                setPwmValues(item.pwm); // ✅ Обновим PWM — detectPresetMode сработает сам
+                                sendPWMValues(item.pwm);
+                              } else {
+                                console.error("⛔ Ошибка включения реле:", res.statusText);
+                              }
+                            } catch (error) {
+                              console.error("⛔ Не удалось включить окно:", error);
+                            }
+                          } else {
+                            setPwmValues(item.pwm);
+                            sendPWMValues(item.pwm);
+                          }
+                        }}
+                        
+                        
+                      >
+                        <Text style={[styles.modeText, { color: selectedMode === item.name ? "#222" : "#fff" }]}>
+                          {item.name}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                    columnWrapperStyle={styles.row}
+                    scrollEnabled={false}
+                  />
+                </View>
+  
+                {/* Слайдеры */}
+                <View style={styles.modesContainer}>
+                  {Object.keys(pwmValues).map((channel) => {
+                    const percentage = Math.round((pwmValues[channel as keyof PWMValues] / 255) * 100);
+                    return (
+                      <View key={channel} style={styles.sliderWrapper}>
+                        <View style={styles.sliderLabelContainer}>
+                          <Text style={styles.sliderLabel}>{channel.replace("pwm", "")}</Text>
+                          <Text style={styles.sliderLabel}>{percentage}%</Text>
+                        </View>
+                        <Slider
+                          minimumValue={0}
+                          maximumValue={255}
+                          step={13}
+                          value={pwmValues[channel as keyof PWMValues] || 0}
+                          onSlidingComplete={(value) => {
+                            const newPwmValues = { ...pwmValues, [channel]: Math.round(value) };
+                            setPwmValues(newPwmValues);
+                            sendPWMValues(newPwmValues);
+                          }}
+                          minimumTrackTintColor={sliderColors[channel as keyof typeof sliderColors]}
+                          maximumTrackTintColor="#282A36"
+                          thumbTintColor={relayState ? "#f9c154" : "#666"}
+                          disabled={!relayState}
+                          style={styles.slider}
+                        />
+                      </View>
+                    );
+                  })}
+                </View>
+  
+                
+              </View>
+            </Pressable>
+  
+            {/* Модалка перехода в ручной режим */}
+            <Modal transparent visible={showHoldModal} animationType="fade">
+              <View style={styles.modalContainer}>
+                <View style={styles.modalContent}>
+                  <Text style={styles.modalTitle}>У Вас включен автоматический режим.</Text>
+                  <Text style={{ color: "#EAEAEA", marginBottom: 20 }}>
+                    Перейти в ручной режим до конца дня?
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setShowHoldModal(false);
+                      toggleHoldMode(true);
+                    }}
+                    style={styles.exitButton}
+                  >
+                    <Text style={styles.exitButtonText}>Да, перейти</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setShowHoldModal(false)}
+                    style={styles.exitButton}
+                  >
+                    <Text style={styles.exitButtonText}>Отмена</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </Modal>
+          </>
+        )}
+      </ScrollView>
+    </SafeAreaView>
   );
-}
+  
+    }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#1E1E2E", paddingTop: 50, padding: 10 },
   deviceInfo: { fontSize: 18, color: "#EAEAEA", textAlign: "center", marginBottom: 10 },
   header: { fontSize: 24, fontWeight: "bold", textAlign: "center", color: "#EAEAEA", marginBottom: 10 },
-  modesContainer: { marginBottom: 10, borderWidth: 1, borderColor: "#374151", borderRadius: 10, padding: 10},
-  button: { width: "100%",height: 60,backgroundColor: "#FBC02D",justifyContent: "center",alignItems: "center",borderRadius: 10,marginBottom: 10,flexDirection: "row", minHeight: 60 },
-  buttonOn: { backgroundColor: "#FBC02D" },
+  modesContainer: { marginBottom: 10, borderWidth: 1, borderColor: "#374151", borderRadius: 10, padding: 10,marginHorizontal: 10},
+  button: { height: 60,backgroundColor: "#f9c154",justifyContent: "center",alignItems: "center",borderRadius: 10,marginBottom: 10,marginHorizontal: 10,flexDirection: "row", minHeight: 60 },
+  buttonOn: { backgroundColor: "#f9c154" },
   buttonOff: { backgroundColor: "#374151" },
-  buttonText: { fontSize: 16, color: "#FBC02D", marginLeft: 10, fontWeight: "bold" },
+  buttonText: { fontSize: 16, color: "#f9c154", marginLeft: 10, fontWeight: "bold" },
   modeButton: {flex: 1, padding: 10,backgroundColor: "#282A36",marginBottom: 5,marginHorizontal: 5,borderRadius: 10,alignItems: "center",justifyContent: "center",minHeight: 60},
-  selectedMode: { backgroundColor: "#FBC02D" },
+  selectedMode: { backgroundColor: "#f9c154" },
   modeText: { fontSize: 16, color: "#EAEAEA", textAlign: "center",fontWeight: "bold"},
-  switchContainer: { flexDirection: "row", justifyContent: "space-between", marginTop: 0},
-  sliderWrapper: { marginBottom: 20 },
+  switchContainer: { flexDirection: "row", justifyContent: "space-between", marginTop: 0,marginLeft: 10},
+  sliderWrapper: { marginBottom: 20,marginHorizontal: 10 },
   sliderLabel: { color: "#fff", fontSize: 14, marginBottom: 5 },
   row: { justifyContent: "space-between" },
   sliderLabelContainer: { flexDirection: "row", justifyContent: "space-between"},
@@ -383,6 +480,48 @@ const styles = StyleSheet.create({
   inactive: { opacity: 0.4, pointerEvents: "none" },
   disabledContainer: { width: "100%", marginTop: 10 },
   loadingIndicator: {flex: 1,justifyContent: "center",alignItems: "center",marginTop: 20,},
-  
+  text: { fontSize: 24, fontWeight: "bold", textAlign: "center", color: "#EAEAEA", marginBottom: 10 },
+  deviceInfoContainer: { alignItems: "center", marginBottom: 10 },
+powerConsumption: {
+  fontSize: 16,
+  color: "#f9c154",
+  textAlign: "center",
+  fontWeight: "bold",
+},
+modalContainer: {
+  flex: 1,
+  justifyContent: "center",
+  alignItems: "center",
+  backgroundColor: "rgba(0,0,0,0.6)",
+},
+modalContent: {
+  width: "80%",
+  backgroundColor: "#282A36",
+  padding: 20,
+  borderRadius: 10,
+  alignItems: "center",
+},
+modalTitle: {
+  fontSize: 20,
+  color: "#f9c154",
+  fontWeight: "bold",
+  marginBottom: 10,
+},
+exitButton: {
+  backgroundColor: "#333",
+  padding: 10,
+  borderRadius: 8,
+  alignItems: "center",
+  marginTop: 10,
+  borderWidth: 1,
+  borderColor: "#f9c154",
+},
+exitButtonText: {
+  fontSize: 16,
+  fontWeight: "bold",
+  color: "#f9c154",
+},
+
+
   
 });
