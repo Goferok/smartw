@@ -591,8 +591,8 @@ const sendScheduleToESP32 = async (
 
   if (isDemoMode) {
     // 🧪 Демонстрационные данные
-    setDeviceName("Demo Lumi");
-    setDeviceLocation("Демо-комната");
+    setDeviceName("Тестовое устройство");
+    setDeviceLocation("Тестовая зона");
     setTimezone(3);
     console.log("🧪 ДЕМО: Загружены фиктивные данные устройства");
     return;

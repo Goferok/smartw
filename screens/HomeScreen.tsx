@@ -329,8 +329,8 @@ const HomeScreen = ({ updateSelectedDevice }: HomeScreenProps) => {
     if (isDemoMode) {
       const demoDevice: Device = {
         ip: "0.0.0.0",
-        name: "Демо-устройство",
-        location: "🌐 Симуляция",
+        name: "Тестовое устройство",
+        location: "Тестовая зона",
         status: "Online",
         lastSeen: Date.now(),
       };
@@ -343,17 +343,7 @@ const HomeScreen = ({ updateSelectedDevice }: HomeScreenProps) => {
       <Text style={styles.title}>Lumi</Text>
       <Text style={styles.titlesmall}>управление искусственным окном</Text>
 
-      <TouchableOpacity
-        style={[styles.searchButton]}
-        onPress={() => {
-          const demoDeviceIp = "0.0.0.0";
-          setIsDemoMode(true);
-          updateSelectedDevice(demoDeviceIp);
-          navigation.navigate("Modes", { deviceIp: demoDeviceIp, isDemoMode: true });
-        }}
-      >
-        <Text style={styles.searchButtonText}>Демо-режим</Text>
-      </TouchableOpacity>
+      
 
       <TouchableOpacity style={styles.searchButton} onPress={fetchDevices} disabled={isScanning}>
         {isScanning ? <ActivityIndicator color="black" /> : <Text style={styles.searchButtonText}>🔍 Поиск устройств</Text>}
@@ -398,6 +388,25 @@ const HomeScreen = ({ updateSelectedDevice }: HomeScreenProps) => {
             scrollEnabled={false}
           />
         </ScrollView>
+        {/* 🔹 Скрытая кнопка демо-режима */}
+<TouchableOpacity
+  style={{
+    marginTop: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: "#2E2E2E",
+    alignSelf: "center",
+  }}
+  onPress={() => {
+    const demoDeviceIp = "0.0.0.0";
+    setIsDemoMode(true);
+    updateSelectedDevice(demoDeviceIp);
+    navigation.navigate("Modes", { deviceIp: demoDeviceIp, isDemoMode: true });
+  }}
+>
+  <Text style={{ color: "#888", fontSize: 13 }}>Войти в демо-режим</Text>
+</TouchableOpacity>
       </View>
     </View>
   );
