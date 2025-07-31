@@ -41,7 +41,7 @@ const sliderColors = {
 export default function ModesScreen() {
   const navigation = useNavigation();
   const route = useRoute<RouteProp<RootStackParamList, "Modes">>();
-  const { deviceIp } = route.params; // Извлекаем deviceIp из параметров маршрута
+  const { deviceIp, isDemoMode = false } = route.params; // Извлекаем deviceIp из параметров маршрута
 
   const [selectedMode, setSelectedMode] = useState("");
   const [pwmValues, setPwmValues] = useState<PWMValues>({ pwm3000K: 0, pwm4000K: 0, pwm5000K: 0, pwm5700K: 0 });
@@ -102,6 +102,9 @@ useEffect(() => {
   
   //Отправка состояния Hold на ESP32
   const toggleHoldMode = async (newState: boolean) => {
+    setHoldMode(newState);
+    if (isDemoMode) return;
+
     setHoldMode(newState); // ✅ Обновляем состояние UI
   
     try {
@@ -241,6 +244,16 @@ useEffect(() => {
 
 
 const fetchAllDeviceData = async (showLoading = false) => {
+  if (isDemoMode) {
+  setPwmValues({ pwm3000K: 180, pwm4000K: 160, pwm5000K: 120, pwm5700K: 100 });
+  setRelayState(true);
+  setDeviceName("Демо-устройство");
+  setDeviceLocation("Тестовая зона");
+  setAutoMode(false);
+  if (showLoading) setLoading(false);
+  return;
+}
+
   if (showLoading) setLoading(true);
 
   try {
@@ -268,6 +281,12 @@ const fetchAllDeviceData = async (showLoading = false) => {
 };
 
   const toggleRelay = async () => {
+    if (isDemoMode) {
+  const newState = !relayState;
+  setRelayState(newState);
+  if (!newState) setSelectedMode("");
+  return;
+}
     const newState = !relayState;
     try {
       await fetch(`http://${deviceIp}/setRelay?state=${newState ? "on" : "off"}`, { method: "POST" });
@@ -281,6 +300,12 @@ const fetchAllDeviceData = async (showLoading = false) => {
   };
 
   const sendPWMValues = async (newValues: PWMValues) => {
+    if (!relayState) return;
+if (isDemoMode) {
+  setPwmValues(newValues);
+  return;
+}
+
     if (!relayState) return; // ❌ Не отправляем, если реле выключено
   
     const pwmUrl = `http://${deviceIp}/setPWM?pwm3000K=${newValues.pwm3000K}&pwm4000K=${newValues.pwm4000K}&pwm5000K=${newValues.pwm5000K}&pwm5700K=${newValues.pwm5700K}`;

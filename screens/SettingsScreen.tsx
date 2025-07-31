@@ -31,7 +31,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 export default function SettingsScreen() {
   const route = useRoute<RouteProp<RootStackParamList, "Settings">>();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { deviceIp } = route.params;
+  const { deviceIp, isDemoMode } = route.params;
   //const [deviceIp, setDeviceIp] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [deviceName, setDeviceName] = useState("");
@@ -103,6 +103,7 @@ export default function SettingsScreen() {
     { value: 12, label: "UTC +12:00 (Камчатка, Фиджи)" },
   ];
   useEffect(() => {
+    
     isMounted.current = true;
     return () => { isMounted.current = false; };
   }, []);
@@ -147,61 +148,65 @@ export default function SettingsScreen() {
   
   //Функция проверки версии прошивки
   const checkFirmwareVersion = async () => {
-    if (!deviceIp) return;
-  
-    try {
-      const res = await fetch(`http://${deviceIp}/getFirmwareVersion`);
-      const data = await res.json();
-      const currentVersion = data.version;
-      setFirmwareVersion(currentVersion);
-  
-      const versionRes = await fetch(`https://storage.yandexcloud.net/firmware-updates/firmware_version.txt`);
-      const latestVersion = (await versionRes.text()).trim();
-      setLatestFirmwareVersion(latestVersion);
-  
-      // Открываем модалку
-      setFirmwareModalVisible(true);
-    } catch (error) {
-      console.error("⛔ Ошибка при проверке прошивки:", error);
-      Alert.alert("Ошибка", "Не удалось проверить версию прошивки.");
-    }
-  };
+  if (!deviceIp) return;
+
+  if (isDemoMode) {
+    // 🔧 Ветка демо-режима
+    console.log("🧪 Демо-режим: проверка версии прошивки");
+    setFirmwareVersion("1.0.0-demo");
+    setLatestFirmwareVersion("1.1.0-demo");
+    setFirmwareModalVisible(true);
+    return;
+  }
+
+  try {
+    const res = await fetch(`http://${deviceIp}/getFirmwareVersion`);
+    const data = await res.json();
+    const currentVersion = data.version;
+    setFirmwareVersion(currentVersion);
+
+    const versionRes = await fetch(`https://storage.yandexcloud.net/firmware-updates/firmware_version.txt`);
+    const latestVersion = (await versionRes.text()).trim();
+    setLatestFirmwareVersion(latestVersion);
+
+    setFirmwareModalVisible(true);
+  } catch (error) {
+    console.error("⛔ Ошибка при проверке прошивки:", error);
+    Alert.alert("Ошибка", "Не удалось проверить версию прошивки.");
+  }
+};
   
   //Функция обновления прошивки
   const updateFirmware = async () => {
-    if (!deviceIp) return;
-  
-    setUpdating(true);
-  
-    try {
-      await fetch(`http://${deviceIp}/updateFirmware`, { method: "POST" });
-  
-      // ⛔ Останавливаем интервалы, только если они заданы
-      if (updateIntervalRef.current !== null) {
-        clearInterval(updateIntervalRef.current);
-        updateIntervalRef.current = null;
-      }
-  
-      if (timeIntervalRef.current !== null) {
-        clearInterval(timeIntervalRef.current);
-        timeIntervalRef.current = null;
-      }
-  
-      // ⛔ Закрываем сокет
-      if (socketRef.current) {
-        socketRef.current.close();
-        socketRef.current = null;
-      }
-  
-      // 🔄 Ждем, пока устройство вернется
-      waitForDeviceToComeBack();
-  
-    } catch (error) {
-      console.error("⛔ Ошибка обновления прошивки:", error);
-      Alert.alert("Ошибка", "Не удалось обновить прошивку.");
+  if (isDemoMode) {
+    console.log("🧪 Демо-режим: обновление прошивки не выполняется");
+    Alert.alert("Демо-режим", "В демо-режиме обновление прошивки не поддерживается.");
+    return;
+  }
+
+  if (!deviceIp) return;
+  setUpdating(true);
+
+  try {
+    const response = await fetch(`http://${deviceIp}/updateFirmware`, {
+      method: "POST",
+    });
+
+    if (!response.ok) throw new Error(`Ошибка HTTP: ${response.status}`);
+
+    console.log("✅ Обновление запущено");
+
+    setTimeout(() => {
       setUpdating(false);
-    }
-  };
+      Alert.alert("Готово", "Прошивка обновлена. Устройство будет перезагружено.");
+    }, 10000);
+  } catch (err) {
+    console.error("⛔ Ошибка обновления:", err);
+    setUpdating(false);
+    Alert.alert("Ошибка", "Не удалось обновить прошивку.");
+  }
+};
+
   
   const fetchWithTimeout = (url: string, timeout: number = 2000): Promise<Response> => {
     return Promise.race([
@@ -369,137 +374,194 @@ export default function SettingsScreen() {
 
 
   // ✅ Функция получения авто режима с контроллера
-  const fetchAutoModeState = async () => {
-    if (!deviceIp) return;
+const fetchAutoModeState = async () => {
+  if (!deviceIp) return;
 
-    try {
-      const res = await fetch(`http://${deviceIp}/getAutoMode`);
-      const data = await res.json();
-
-      if (isMounted.current && data && "autoMode" in data) {  // ← проверка isMounted
-        setAutoMode(data.autoMode);
-      }
-    } catch (error) {
-      console.error("⛔ Ошибка при получении autoMode:", error);
+  if (isDemoMode) {
+    // 🔧 Демо-режим — подставим фейковое значение
+    console.log("🧪 Демо-режим: получение autoMode");
+    if (isMounted.current) {
+      setAutoMode(true); // или false, если хочешь имитировать выключенный режим
     }
-  };
+    return;
+  }
+
+  try {
+    const res = await fetch(`http://${deviceIp}/getAutoMode`);
+    const data = await res.json();
+
+    if (isMounted.current && data && "autoMode" in data) {
+      setAutoMode(data.autoMode);
+    }
+  } catch (error) {
+    console.error("⛔ Ошибка при получении autoMode:", error);
+  }
+};
 
 
 
   // ✅ Функция обновления режима на контроллере
-  const updateAutoMode = async (newValue: boolean) => {
-    if (!deviceIp) return;
+const updateAutoMode = async (newValue: boolean) => {
+  if (!deviceIp) return;
 
-    const stateStr = newValue ? "on" : "off"; // ✅ Контроллер ожидает "on" или "off"
-    console.log(`📡 Отправляем autoMode=${stateStr} на контроллер (POST)...`);
+  if (isDemoMode) {
+    // 🔧 Демо-режим: имитируем включение/выключение
+    console.log(`🧪 Демо-режим: autoMode=${newValue}`);
+    setAutoMode(newValue);
+    return;
+  }
 
-    try {
-      const response = await fetch(`http://${deviceIp}/setAutoMode`, {
-        method: "POST", // ✅ Исправлено с GET на POST
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: `state=${stateStr}`, // ✅ Передаем параметр state в body
-      });
+  const stateStr = newValue ? "on" : "off"; // ✅ Контроллер ожидает "on" или "off"
+  console.log(`📡 Отправляем autoMode=${stateStr} на контроллер (POST)...`);
 
-      if (!response.ok) {
-        console.error(`⛔ Ошибка HTTP ${response.status}: ${response.statusText}`);
-        return;
-      }
+  try {
+    const response = await fetch(`http://${deviceIp}/setAutoMode`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `state=${stateStr}`,
+    });
 
-      console.log(`✅ Автоматический режим ${newValue ? "ВКЛЮЧЕН" : "ВЫКЛЮЧЕН"}`);
-
-      await fetchAutoModeState(); // ✅ Повторный запрос, чтобы проверить изменение
-    } catch (error) {
-      console.error("⛔ Ошибка при отправке autoMode:", error);
-      Alert.alert("Ошибка", "Не удалось изменить автоматический режим.");
+    if (!response.ok) {
+      console.error(`⛔ Ошибка HTTP ${response.status}: ${response.statusText}`);
+      return;
     }
-  };
+
+    console.log(`✅ Автоматический режим ${newValue ? "ВКЛЮЧЕН" : "ВЫКЛЮЧЕН"}`);
+    await fetchAutoModeState(); // ✅ Повторный запрос
+  } catch (error) {
+    console.error("⛔ Ошибка при отправке autoMode:", error);
+    Alert.alert("Ошибка", "Не удалось изменить автоматический режим.");
+  }
+};
+
 
 
   // 🟢 Загрузка расписания с контроллера
-  const fetchSchedule = async () => {
-    if (!deviceIp) return;
+const fetchSchedule = async () => {
+  if (!deviceIp) return;
 
-    try {
-      const res = await fetch(`http://${deviceIp}/getSchedule`);
-      const data: { schedule: ScheduleEntry[] } = await res.json();
+  // ✅ ДЕМО-РЕЖИМ
+  if (isDemoMode) {
+    console.log("🧪 Демо-режим: загружаем фиктивное расписание");
 
-      console.log("📥 Получено расписание:", JSON.stringify(data.schedule, null, 2));
+    const fakeSchedule: Record<string, { start: Date; end: Date; enabled: boolean }> = {};
+    weekdaysController.forEach((day, index) => {
+      fakeSchedule[day] = {
+        start: new Date(`2000-01-01T0${index + 6}:00:00`), // 06:00, 07:00 и т.д.
+        end: new Date(`2000-01-01T0${index + 8}:00:00`),   // 08:00, 09:00 и т.д.
+        enabled: index % 2 === 0, // включены только чётные дни
+      };
+    });
 
-      if (!data.schedule || !Array.isArray(data.schedule)) {
-        throw new Error("⛔ Некорректный формат данных от контроллера");
-      }
-
-      const newSchedule: Record<string, { start: Date; end: Date; enabled: boolean }> = {};
-
-      data.schedule.forEach((entry, index) => {
-        if (index >= weekdaysController.length) return;
-
-        const controllerDay = weekdaysController[index]; // ✅ Теперь соответствие индексов 1:1
-
-        newSchedule[controllerDay] = {
-          start: new Date(`2000-01-01T${entry.start}:00`),
-          end: new Date(`2000-01-01T${entry.end}:00`),
-          enabled: entry.enabled ?? false,
-        };
-      });
-
-      if (isMounted.current) { // ← проверка isMounted
-        setSchedule(newSchedule);
-      }
-    } catch (error) {
-      console.error("⛔ Ошибка загрузки расписания:", error);
+    if (isMounted.current) {
+      setSchedule(fakeSchedule);
     }
-  };
+
+    return;
+  }
+
+  // ✅ Обычный режим — загрузка с контроллера
+  try {
+    const res = await fetch(`http://${deviceIp}/getSchedule`);
+    const data: { schedule: ScheduleEntry[] } = await res.json();
+
+    console.log("📥 Получено расписание:", JSON.stringify(data.schedule, null, 2));
+
+    if (!data.schedule || !Array.isArray(data.schedule)) {
+      throw new Error("⛔ Некорректный формат данных от контроллера");
+    }
+
+    const newSchedule: Record<string, { start: Date; end: Date; enabled: boolean }> = {};
+
+    data.schedule.forEach((entry, index) => {
+      if (index >= weekdaysController.length) return;
+
+      const controllerDay = weekdaysController[index];
+
+      newSchedule[controllerDay] = {
+        start: new Date(`2000-01-01T${entry.start}:00`),
+        end: new Date(`2000-01-01T${entry.end}:00`),
+        enabled: entry.enabled ?? false,
+      };
+    });
+
+    if (isMounted.current) {
+      setSchedule(newSchedule);
+    }
+  } catch (error) {
+    console.error("⛔ Ошибка загрузки расписания:", error);
+  }
+};
+
+
 
 
 
   // 🔹 Отправка расписания на ESP32 немедленно после любого изменения
-  const sendScheduleToESP32 = async (updatedSchedule: Record<string, { start: Date; end: Date; enabled: boolean }>) => {
-    if (!deviceIp) return;
+const sendScheduleToESP32 = async (
+  updatedSchedule: Record<string, { start: Date; end: Date; enabled: boolean }>
+) => {
+  if (!deviceIp) return;
 
-    try {
-      const scheduleParams = Object.entries(updatedSchedule)
-        .map(([day, entry], i) => {
-          const start = formatTime(entry.start);
-          const end = formatTime(entry.end);
-          const enabled = entry.enabled ? "true" : "false";
+  // ✅ Демо-режим — просто логируем действие
+  if (isDemoMode) {
+    console.log("🧪 ДЕМО: отправка расписания:", updatedSchedule);
+    return;
+  }
 
-          return `start${i}=${start}&end${i}=${end}&enabled${i}=${enabled}`;
-        })
-        .join("&");
+  try {
+    const scheduleParams = Object.entries(updatedSchedule)
+      .map(([day, entry], i) => {
+        const start = formatTime(entry.start);
+        const end = formatTime(entry.end);
+        const enabled = entry.enabled ? "true" : "false";
 
-      if (scheduleParams.length === 0) return;
+        return `start${i}=${start}&end${i}=${end}&enabled${i}=${enabled}`;
+      })
+      .join("&");
 
-      console.log("📡 Отправляем расписание на контроллер:", scheduleParams);
-      await fetch(`http://${deviceIp}/setSchedule?${scheduleParams}`, { method: "GET" });
+    if (scheduleParams.length === 0) return;
 
-      console.log("✅ Расписание обновлено на контроллере");
-    } catch (error) {
-      console.error("⛔ Ошибка отправки расписания:", error);
-    }
-  };
+    console.log("📡 Отправляем расписание на контроллер:", scheduleParams);
+    await fetch(`http://${deviceIp}/setSchedule?${scheduleParams}`, { method: "GET" });
+
+    console.log("✅ Расписание обновлено на контроллере");
+  } catch (error) {
+    console.error("⛔ Ошибка отправки расписания:", error);
+  }
+};
+
 
 
 
   // ✅ Вызов `sendScheduleToESP32` сразу при изменении расписания
   useEffect(() => {
-    if (Object.keys(schedule).length > 0) {
-      sendScheduleToESP32(schedule);
-    }
-  }, [schedule]);
+  if (!isDemoMode && Object.keys(schedule).length > 0) {
+    sendScheduleToESP32(schedule);
+  } else if (isDemoMode) {
+    console.log("🧪 ДЕМО: изменение расписания (useEffect):", schedule);
+  }
+}, [schedule]);
 
   // ✅ Функция обновления расписания в UI и немедленной отправки на ESP32
   const updateScheduleEntry = (day: string, key: "start" | "end" | "enabled", value: any) => {
-    setSchedule((prevSchedule) => {
-      const updatedSchedule = {
-        ...prevSchedule,
-        [day]: { ...prevSchedule[day], [key]: value },
-      };
+  setSchedule((prevSchedule) => {
+    const updatedSchedule = {
+      ...prevSchedule,
+      [day]: { ...prevSchedule[day], [key]: value },
+    };
 
-      sendScheduleToESP32(updatedSchedule); // ✅ Немедленная отправка
-      return updatedSchedule;
-    });
-  };
+    // 🔧 Расписание обновляется ТОЛЬКО на контроллер, если это не демо
+    if (!isDemoMode) {
+      sendScheduleToESP32(updatedSchedule);
+    } else {
+      console.log("🧪 [Демо] Обновлено только в UI:", updatedSchedule);
+    }
+
+    return updatedSchedule;
+  });
+};
+
 
   // ✅ Изменение включения/выключения дня (свитч)
   const toggleDayEnabled = (day: string) => {
@@ -525,164 +587,232 @@ export default function SettingsScreen() {
   };
   //Загрузка данных имени и расположение с контроллера
   const loadDeviceInfo = async () => {
-    if (!deviceIp) return; // ⛔ Предотвращаем вызов без IP
+  if (!deviceIp) return;
 
-    try {
-      const res = await fetch(`http://${deviceIp}/getDeviceInfo`);
-      const data = await res.json();
+  if (isDemoMode) {
+    // 🧪 Демонстрационные данные
+    setDeviceName("Demo Lumi");
+    setDeviceLocation("Демо-комната");
+    setTimezone(3);
+    console.log("🧪 ДЕМО: Загружены фиктивные данные устройства");
+    return;
+  }
 
-      if (data.device_name) setDeviceName(data.device_name);
-      if (data.device_location) setDeviceLocation(data.device_location);
-      if (data.timezone) setTimezone(data.timezone);
+  try {
+    const res = await fetch(`http://${deviceIp}/getDeviceInfo`);
+    const data = await res.json();
 
-      console.log("✅ Данные устройства загружены:", data);
-    } catch (error) {
-      console.error("⛔ Ошибка загрузки данных устройства:", error);
-      Alert.alert("Ошибка", "Не удалось загрузить данные устройства.");
-    }
-  };
+    if (data.device_name) setDeviceName(data.device_name);
+    if (data.device_location) setDeviceLocation(data.device_location);
+    if (data.timezone) setTimezone(data.timezone);
+
+    console.log("✅ Данные устройства загружены:", data);
+  } catch (error) {
+    console.error("⛔ Ошибка загрузки данных устройства:", error);
+    Alert.alert("Ошибка", "Не удалось загрузить данные устройства.");
+  }
+};
+
 
   useEffect(() => {
-    const interval = setInterval(fetchCurrentTime, 5000);
-    return () => clearInterval(interval);
-  }, [deviceIp]);
+  if (isDemoMode) return; // 🧪 В демо-режиме не опрашиваем устройство
+
+  const interval = setInterval(fetchCurrentTime, 5000);
+  return () => clearInterval(interval);
+}, [deviceIp, isDemoMode]);
+
 
   // 📌 Сохранение данных
   const saveChanges = async () => {
-    if (!deviceIp || !modalType) return;
-    Keyboard.dismiss();
+  if (!modalType) return;
+  Keyboard.dismiss();
 
-    try {
-      const key = modalType === "name" ? "device_name" : "device_location";
-      await fetch(`http://${deviceIp}/setDeviceInfo`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: `${key}=${encodeURIComponent(inputValue)}`,
-      });
+  if (isDemoMode) {
+    console.log("🧪 [Демо-режим] Сохраняем изменения локально:", inputValue);
+    if (modalType === "name") setDeviceName(inputValue);
+    if (modalType === "location") setDeviceLocation(inputValue);
+    setModalVisible(false);
+    return;
+  }
 
-      if (isMounted.current) {  // 🔥 Добавляем проверку
-        if (modalType === "name") setDeviceName(inputValue);
-        if (modalType === "location") setDeviceLocation(inputValue);
-        setModalVisible(false);
-      }
-    } catch (error) {
-      console.error("⛔ Ошибка обновления:", error);
+  if (!deviceIp) return;
+
+  try {
+    const key = modalType === "name" ? "device_name" : "device_location";
+    await fetch(`http://${deviceIp}/setDeviceInfo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `${key}=${encodeURIComponent(inputValue)}`,
+    });
+
+    if (isMounted.current) {
+      if (modalType === "name") setDeviceName(inputValue);
+      if (modalType === "location") setDeviceLocation(inputValue);
+      setModalVisible(false);
     }
-  };
+  } catch (error) {
+    console.error("⛔ Ошибка обновления:", error);
+  }
+};
+
 
   //Отправка данных часового пояса на контроллер
   const updateTimezone = async (tz: number) => {
-    setTimezone(tz);
-    try {
-      await fetch(`http://${deviceIp}/setTimezone`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: `timezone=${tz}`,
-      });
-    } catch (error) {
-      Alert.alert("Ошибка", "Не удалось обновить часовой пояс.");
-    }
-  };
+  setTimezone(tz);
+
+  if (isDemoMode) {
+    console.log("🧪 [Демо-режим] Часовой пояс обновлён:", tz);
+    return;
+  }
+
+  try {
+    await fetch(`http://${deviceIp}/setTimezone`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `timezone=${tz}`,
+    });
+  } catch (error) {
+    Alert.alert("Ошибка", "Не удалось обновить часовой пояс.");
+  }
+};
+
   //Загрузка текущего времени с контроллера
   const fetchCurrentTime = async () => {
-    if (!deviceIp) return;
+  if (isDemoMode) {
+    const now = new Date();
+    const demoTime = now.toTimeString().slice(0, 5); // hh:mm
+    const demoDay = weekdaysController[now.getDay()];
 
-    try {
-      const res = await fetch(`http://${deviceIp}/getTime`);
-      const data = await res.json();
+    setCurrentTime(demoTime);
+    setCurrentDay(demoDay);
 
-      if (data.time) {
-        setCurrentTime(formatTime(data.time)); // ✅ Устанавливаем корректное время
-      }
+    console.log("🧪 [Демо-режим] Время:", demoTime, "| День:", demoDay);
+    return;
+  }
 
-      if (data.day !== undefined) {
-        const dayIndex = parseInt(data.day, 10);
-        if (!isNaN(dayIndex) && dayIndex >= 0 && dayIndex < weekdaysController.length) {
-          setCurrentDay(weekdaysController[dayIndex]); // ✅ Берем индекс без смещения
-        } else {
-          setCurrentDay("Неизвестно");
-        }
-      }
-    } catch (error) {
-      console.error("⛔ Ошибка загрузки времени:", error);
+  if (!deviceIp) return;
+
+  try {
+    const res = await fetch(`http://${deviceIp}/getTime`);
+    const data = await res.json();
+
+    if (data.time) {
+      setCurrentTime(formatTime(data.time));
     }
-  };
+
+    if (data.day !== undefined) {
+      const dayIndex = parseInt(data.day, 10);
+      if (!isNaN(dayIndex) && dayIndex >= 0 && dayIndex < weekdaysController.length) {
+        setCurrentDay(weekdaysController[dayIndex]);
+      } else {
+        setCurrentDay("Неизвестно");
+      }
+    }
+  } catch (error) {
+    console.error("⛔ Ошибка загрузки времени:", error);
+  }
+};
+
 
 
   // ✅ Функция загрузки состояния датчика присутствия
   const fetchPresenceSensorState = async () => {
-    if (!deviceIp) return;
+  if (isDemoMode) {
+    console.log("🧪 [Демо-режим] Получаем фейковое состояние датчика присутствия...");
 
-    try {
-      console.log(`📡 Запрашиваем состояние датчика присутствия у ${deviceIp}...`);
-      const res = await fetch(`http://${deviceIp}/getPresenceSensor`);
-      const data = await res.json();
+    // Устанавливаем фиктивные значения
+    setPresenceSensorEnabled(true);
+    setPresenceTimeout(5); // 5 минут
 
-      if ("enabled" in data) setPresenceSensorEnabled(data.enabled);
-      if ("timeout" in data) {
-        const timeoutInMinutes = Math.round(data.timeout / 60); // 🔹 Преобразуем секунды в минуты
-        setPresenceTimeout(Math.max(1, timeoutInMinutes)); // Минимум 1 минута
-      }
+    return;
+  }
 
-      console.log(`✅ [ESP] Датчик: ${data.enabled ? "ВКЛ" : "ВЫКЛ"}, таймаут: ${data.timeout} сек`);
-    } catch (error) {
-      console.error("⛔ Ошибка получения состояния датчика:", error);
+  if (!deviceIp) return;
+
+  try {
+    console.log(`📡 Запрашиваем состояние датчика присутствия у ${deviceIp}...`);
+    const res = await fetch(`http://${deviceIp}/getPresenceSensor`);
+    const data = await res.json();
+
+    if ("enabled" in data) setPresenceSensorEnabled(data.enabled);
+    if ("timeout" in data) {
+      const timeoutInMinutes = Math.round(data.timeout / 60); // 🔹 Преобразуем секунды в минуты
+      setPresenceTimeout(Math.max(1, timeoutInMinutes)); // Минимум 1 минута
     }
-  };
+
+    console.log(`✅ [ESP] Датчик: ${data.enabled ? "ВКЛ" : "ВЫКЛ"}, таймаут: ${data.timeout} сек`);
+  } catch (error) {
+    console.error("⛔ Ошибка получения состояния датчика:", error);
+  }
+};
+
 
   // ✅ Плавное обновление свитча без задержек + перезапрос данных
   const togglePresenceSensor = async () => {
-    if (!deviceIp) return;
-    const newEnabled = !presenceSensorEnabled; // Инвертируем текущее состояние
-    setPresenceSensorEnabled(newEnabled); // Обновляем UI сразу
+  const newEnabled = !presenceSensorEnabled; // Инвертируем текущее состояние
+  setPresenceSensorEnabled(newEnabled); // Обновляем UI сразу
 
-    console.log(`📡 Отправляем: Датчик = ${newEnabled ? "ВКЛ" : "ВЫКЛ"}`);
-    try {
-      const response = await fetch(`http://${deviceIp}/setPresenceSensor`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: `enabled=${newEnabled ? "true" : "false"}&timeout=${presenceTimeout * 60}`, // 🔹 Отправляем секунды
-      });
+  if (isDemoMode) {
+    console.log(`🧪 [Демо-режим] Меняем датчик присутствия на ${newEnabled ? "ВКЛ" : "ВЫКЛ"}`);
+    return;
+  }
 
-      if (!response.ok) {
-        throw new Error(`Ошибка HTTP ${response.status}`);
-      }
+  if (!deviceIp) return;
 
-      console.log(`✅ Датчик ${newEnabled ? "ВКЛЮЧЕН" : "ВЫКЛЮЧЕН"}`);
-      fetchPresenceSensorState(); // 🔄 Обновляем состояние после отправки
-    } catch (error) {
-      console.error("⛔ Ошибка отправки данных:", error);
-      setPresenceSensorEnabled(!newEnabled); // Если ошибка, возвращаем предыдущее состояние
-      Alert.alert("Ошибка", "Не удалось изменить состояние датчика.");
+  console.log(`📡 Отправляем: Датчик = ${newEnabled ? "ВКЛ" : "ВЫКЛ"}`);
+  try {
+    const response = await fetch(`http://${deviceIp}/setPresenceSensor`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `enabled=${newEnabled ? "true" : "false"}&timeout=${presenceTimeout * 60}`, // 🔹 Отправляем секунды
+    });
+
+    if (!response.ok) {
+      throw new Error(`Ошибка HTTP ${response.status}`);
     }
-  };
 
-  const updatePresenceTimeout = async (value: number) => { // ✅ Меняем тип с `string` на `number`
-    if (!deviceIp) return;
+    console.log(`✅ Датчик ${newEnabled ? "ВКЛЮЧЕН" : "ВЫКЛЮЧЕН"}`);
+    fetchPresenceSensorState(); // 🔄 Обновляем состояние после отправки
+  } catch (error) {
+    console.error("⛔ Ошибка отправки данных:", error);
+    setPresenceSensorEnabled(!newEnabled); // Если ошибка, возвращаем предыдущее состояние
+    Alert.alert("Ошибка", "Не удалось изменить состояние датчика.");
+  }
+};
 
-    const timeoutInSeconds = value * 60; // ✅ Преобразуем минуты в секунды
 
-    setPresenceTimeout(value); // ✅ Обновляем состояние
+  const updatePresenceTimeout = async (value: number) => {
+  setPresenceTimeout(value); // ✅ Обновляем UI немедленно
+  const timeoutInSeconds = value * 60;
 
-    console.log(`📡 Отправляем таймаут ${value} мин (${timeoutInSeconds} сек) на контроллер`);
-    try {
-      const response = await fetch(`http://${deviceIp}/setPresenceSensor`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: `enabled=${presenceSensorEnabled ? "true" : "false"}&timeout=${timeoutInSeconds}`,
-      });
+  if (isDemoMode) {
+    console.log(`🧪 [Демо-режим] Установлен таймаут ${value} мин (${timeoutInSeconds} сек)`);
+    return;
+  }
 
-      if (!response.ok) {
-        throw new Error(`Ошибка HTTP ${response.status}`);
-      }
+  if (!deviceIp) return;
 
-      console.log(`✅ Таймаут датчика обновлен: ${value} мин`);
-      fetchPresenceSensorState(); // 🔄 Обновляем состояние после отправки
-    } catch (error) {
-      console.error("⛔ Ошибка отправки таймаута:", error);
-      Alert.alert("Ошибка", "Не удалось изменить таймаут.");
+  console.log(`📡 Отправляем таймаут ${value} мин (${timeoutInSeconds} сек) на контроллер`);
+
+  try {
+    const response = await fetch(`http://${deviceIp}/setPresenceSensor`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `enabled=${presenceSensorEnabled ? "true" : "false"}&timeout=${timeoutInSeconds}`,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Ошибка HTTP ${response.status}`);
     }
-  };
+
+    console.log(`✅ Таймаут датчика обновлен: ${value} мин`);
+    fetchPresenceSensorState(); // 🔄 Перезапрашиваем состояние после изменения
+  } catch (error) {
+    console.error("⛔ Ошибка отправки таймаута:", error);
+    Alert.alert("Ошибка", "Не удалось изменить таймаут.");
+  }
+};
+
 
 
 
@@ -893,94 +1023,109 @@ export default function SettingsScreen() {
             </Modal>
 
             {/* Расписание */}
-            {autoMode && (
-              <View style={styles.scheduleContainer}>
-                <Text style={styles.scheduleHeader}>График работы</Text>
-                {[...weekdaysController.slice(1), weekdaysController[0]].map((day, index) => {
-                  const controllerIndex = weekdaysController.indexOf(day); // 🟢 Получаем индекс контроллера
-                  const scheduleEntry = schedule[day];
+{autoMode && (
+  <View style={styles.scheduleContainer}>
+    <Text style={styles.scheduleHeader}>График работы</Text>
+    {[...weekdaysController.slice(1), weekdaysController[0]].map((day) => {
+      const scheduleEntry = schedule[day];
 
-                  return (
-                    <TouchableOpacity
-                      key={day}
-                      style={[
-                        styles.scheduleRow,
-                        scheduleEntry?.enabled ? styles.activeDay : styles.inactiveDay,
-                      ]}
-                      onPress={() => {
-                        if (!scheduleEntry) return;
-                        toggleDayEnabled(day);
-                      }}
-                    >
-                      <View style={styles.dayBlock}>
-                        <Text style={[
-                          styles.scheduleDay,
-                          { color: scheduleEntry?.enabled ? "#000" : "#EAEAEA" }
-                        ]}>
-                          {day} {/* 🔥 Воскресенье теперь внизу */}
-                        </Text>
-                      </View>
+      return (
+        <TouchableOpacity
+          key={day}
+          style={[
+            styles.scheduleRow,
+            scheduleEntry?.enabled ? styles.activeDay : styles.inactiveDay,
+          ]}
+          onPress={() => {
+            if (!scheduleEntry) return;
+            toggleDayEnabled(day);
+          }}
+        >
+          <View style={styles.dayBlock}>
+            <Text
+              style={[
+                styles.scheduleDay,
+                { color: scheduleEntry?.enabled ? "#000" : "#EAEAEA" },
+              ]}
+            >
+              {day}
+            </Text>
+          </View>
 
-                      <View style={styles.timeBlock}>
-                        <TouchableOpacity
-                          style={styles.timeButton}
-                          onPress={() => {
-                            if (!scheduleEntry) return;
-                            setSelectedDay(day);
-                            setPickerType("start");
-                            setPickerVisible(true);
-                          }}
-                        >
-                          <Text style={styles.timeTextSchedule}>
-                            {scheduleEntry?.start ? formatTime(scheduleEntry.start) : "00:00"}
-                          </Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          style={styles.timeButton}
-                          onPress={() => {
-                            if (!scheduleEntry) return;
-                            setSelectedDay(day);
-                            setPickerType("end");
-                            setPickerVisible(true);
-                          }}
-                        >
-                          <Text style={styles.timeTextSchedule}>
-                            {scheduleEntry?.end ? formatTime(scheduleEntry.end) : "00:00"}
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            )}
-
-            {/* 🔹 Окно выбора времени */}
-            <DatePicker
-              modal
-              open={pickerVisible}
-              date={selectedDay ? schedule[selectedDay][pickerType] : new Date()}
-              mode="time"
-              title="Выберите время" // 🔥 Кастомный заголовок
-              confirmText="ОК" // 🔥 Заменяем стандартный текст подтверждения
-              cancelText="Отмена" // 🔥 Заменяем стандартный текст отмены
-              theme="dark"
-              is24hourSource="locale"
-              onConfirm={(selectedTime) => {
-                if (selectedDay) {
-                  const newSchedule = {
-                    ...schedule,
-                    [selectedDay]: { ...schedule[selectedDay], [pickerType]: selectedTime },
-                  };
-
-                  setSchedule(newSchedule);
-                  sendScheduleToESP32(schedule); // ✅ Заменили мгновенную отправку на debounce
-                }
-                setPickerVisible(false);
+          <View style={styles.timeBlock}>
+            <TouchableOpacity
+              style={styles.timeButton}
+              onPress={() => {
+                if (!scheduleEntry) return;
+                setSelectedDay(day);
+                setPickerType("start");
+                setPickerVisible(true);
               }}
-              onCancel={() => setPickerVisible(false)}
-            />
+            >
+              <Text style={styles.timeTextSchedule}>
+                {scheduleEntry?.start ? formatTime(scheduleEntry.start) : "00:00"}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.timeButton}
+              onPress={() => {
+                if (!scheduleEntry) return;
+                setSelectedDay(day);
+                setPickerType("end");
+                setPickerVisible(true);
+              }}
+            >
+              <Text style={styles.timeTextSchedule}>
+                {scheduleEntry?.end ? formatTime(scheduleEntry.end) : "00:00"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      );
+    })}
+  </View>
+)}
+
+{/* 🔹 Окно выбора времени */}
+<DatePicker
+  modal
+  open={pickerVisible}
+  date={
+    selectedDay && schedule[selectedDay] && schedule[selectedDay][pickerType]
+      ? schedule[selectedDay][pickerType]
+      : new Date()
+  }
+  mode="time"
+  title="Выберите время"
+  confirmText="ОК"
+  cancelText="Отмена"
+  theme="dark"
+  is24hourSource="locale"
+  onConfirm={(selectedTime) => {
+    if (selectedDay) {
+      const newSchedule = {
+        ...schedule,
+        [selectedDay]: {
+          ...schedule[selectedDay],
+          [pickerType]: selectedTime,
+        },
+      };
+
+      setSchedule(newSchedule);
+
+      if (!isDemoMode) {
+        sendScheduleToESP32(newSchedule);
+      } else {
+        console.log("🧪 [Демо] Выбрано новое время:", selectedTime);
+      }
+    }
+    setPickerVisible(false);
+  }}
+  onCancel={() => setPickerVisible(false)}
+/>
+
+
           </>
         )}
       </ScrollView>

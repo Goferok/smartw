@@ -7,14 +7,16 @@ import {
   StyleSheet,
   Alert,
   ActivityIndicator,
-  ScrollView} from "react-native";
+  ScrollView
+} from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useNavigation } from "@react-navigation/native"; // Импортируем useNavigation
+import { useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import dgram from "react-native-udp";
-import { RootStackParamList } from "../AppNavigator"; // Импортируем тип из AppNavigator
+import { RootStackParamList } from "../AppNavigator";
 import { NetworkInfo } from "react-native-network-info";
-// ✅ ТИП ДАННЫХ УСТРОЙСТВА
+
+// ✅ Тип данных устройства
 type Device = {
   name: string;
   ip: string;
@@ -33,82 +35,80 @@ const HomeScreen = ({ updateSelectedDevice }: HomeScreenProps) => {
   const [selectedDevice, setSelectedDevice] = useState<string | null>(null);
   const [searchStatus, setSearchStatus] = useState<string>("");
   const [isScanning, setIsScanning] = useState<boolean>(false);
+  const [isDemoMode, setIsDemoMode] = useState(false);
   const socketRef = useRef<ReturnType<typeof dgram.createSocket> | null>(null);
-  const [isConnected, setIsConnected] = useState<boolean | null>(null);
+
   const selectDevice = async (deviceIp: string) => {
     if (!deviceIp) {
       showDeviceNotSelectedAlert();
       return;
     }
 
-    updateSelectedDevice(deviceIp); // Обновляем выбранное устройство
-    setSelectedDevice(deviceIp); // Обновляем локальное состояние
-    navigation.navigate("Modes", { deviceIp }); // Переходим на экран Modes
-};
+    const isDemo = deviceIp === "0.0.0.0";
 
-useEffect(() => {
-  NetworkInfo.getSSID().then(ssid => {
-    if (!ssid) {
-      Alert.alert(
-        "Нет подключения к Wi-Fi",
-        "Пожалуйста, подключитесь к сети Wi-Fi для работы приложения.",
-        [{ text: "OK" }]
-      );
-    }
-  });
-}, []);
-// ✅ Загружаем устройства только один раз при монтировании
-useEffect(() => {
-  AsyncStorage.removeItem("selectedDevice");
-  setSelectedDevice(null);
-  loadDevices();
-}, []);
-// Функция плавного обновления значения слайдера
+    updateSelectedDevice(deviceIp);
+    setSelectedDevice(deviceIp);
+    navigation.navigate("Modes", { deviceIp, isDemoMode: isDemo });
+  };
 
-// Проверка и сортировка устройств
-useEffect(() => {
-  const interval = setInterval(() => {
-    setDevices((prevDevices) => {
-      // 🔹 Обновляем статус Online/Offline
-      const updatedDevices = prevDevices.map((device) => ({
-        ...device,
-        status: Date.now() - device.lastSeen > 10000 ? "Offline" : "Online",
-      }));
-
-      // 🔹 Сортируем только по статусу (Online → Offline), но не меняем порядок внутри групп
-      updatedDevices.sort((a, b) => {
-        if (a.status === b.status) return 0; // Если статус одинаковый, сохраняем порядок
-        return a.status === "Online" ? -1 : 1; // Online выше, Offline ниже
-      });
-
-      return updatedDevices;
+  useEffect(() => {
+    NetworkInfo.getSSID().then(ssid => {
+      if (!ssid) {
+        Alert.alert(
+          "Нет подключения к Wi-Fi",
+          "Пожалуйста, подключитесь к сети Wi-Fi для работы приложения.",
+          [{ text: "OK" }]
+        );
+      }
     });
-  }, 5000);
+  }, []);
 
-  return () => clearInterval(interval);
-}, []);
+  useEffect(() => {
+    AsyncStorage.removeItem("selectedDevice");
+    setSelectedDevice(null);
+    loadDevices();
+  }, []);
 
-    // 📌 Загружаем последнее выбранное устройство при старте
-useEffect(() => {
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setDevices((prevDevices) => {
+        const updatedDevices = prevDevices.map((device) => ({
+          ...device,
+          status: Date.now() - device.lastSeen > 10000 ? "Offline" : "Online",
+        }));
+
+        updatedDevices.sort((a, b) => {
+          if (a.status === b.status) return 0;
+          return a.status === "Online" ? -1 : 1;
+        });
+
+        return updatedDevices;
+      });
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
     const loadSelectedDevice = async () => {
       const storedDeviceIp = await AsyncStorage.getItem("selectedDevice");
       if (storedDeviceIp) setSelectedDevice(storedDeviceIp);
     };
     loadSelectedDevice();
   }, []);
+
   useEffect(() => {
     const socket = dgram.createSocket({ type: "udp4", reusePort: true });
-   
     socket.bind(4210);
-  
+
     socket.on("message", (msg, rinfo) => {
       try {
         const message = msg.toString();
         console.log(`📡 [UDP] Получено: ${message} от ${rinfo.address}:${rinfo.port}`);
-  
+
         if (message.startsWith("ESP_KEEP_ALIVE:")) {
           const deviceIp = message.split(":")[1];
-  
+
           setDevices((prevDevices) =>
             prevDevices.map((device) =>
               device.ip === deviceIp
@@ -121,117 +121,110 @@ useEffect(() => {
         console.error("⛔ Ошибка обработки UDP-сообщения:", error);
       }
     });
-  
+
     socket.on("error", (err) => {
       console.error("⛔ Ошибка UDP сокета:", err);
       socket.close();
     });
-  
+
     return () => {
       socket.close();
     };
-  }, []); 
-// 📡 Функция обработки UDP-сообщений для обновления имени и расположения
-const startListeningForDeviceInfoUpdates = () => {
-  if (socketRef.current) {
-    console.log("⚠️ Сокет уже работает, новый не создаем.");
-    return;
-  }
+  }, []);
 
-  const socket = dgram.createSocket({ type: "udp4", reusePort: true });
+  const startListeningForDeviceInfoUpdates = () => {
+    if (socketRef.current) {
+      console.log("⚠️ Сокет уже работает, новый не создаем.");
+      return;
+    }
 
-  socket.bind(4210, () => {
-    console.log("🟢 [UDP Home] Сокет привязан к порту 4210");
-  });
+    const socket = dgram.createSocket({ type: "udp4", reusePort: true });
 
-  socket.on("message", (msg, rinfo) => {
-    try {
-      const message = msg.toString().trim();
-      console.log(`📡 [UDP Home] Получено: ${message} от ${rinfo.address}`);
+    socket.bind(4210, () => {
+      console.log("🟢 [UDP Home] Сокет привязан к порту 4210");
+    });
 
-      // 🚫 Игнорируем KEEP_ALIVE сообщения
-      if (message.startsWith("ESP_KEEP_ALIVE")) {
-        console.log("⚠️ [UDP Home] Игнорируем KEEP_ALIVE сообщение.");
-        return;
-      }
+    socket.on("message", (msg, rinfo) => {
+      try {
+        const message = msg.toString().trim();
+        console.log(`📡 [UDP Home] Получено: ${message} от ${rinfo.address}`);
 
-      // 🧐 Проверяем, является ли сообщение JSON
-      if (!message.startsWith("{")) {
-        console.warn("⚠️ [UDP Home] Получено НЕ JSON-сообщение, пропускаем:", message);
-        return;
-      }
+        if (message.startsWith("ESP_KEEP_ALIVE")) {
+          console.log("⚠️ [UDP Home] Игнорируем KEEP_ALIVE сообщение.");
+          return;
+        }
 
-      console.log("🧐 [DEBUG Home] Попытка распарсить JSON:", message);
-      const data = JSON.parse(message);
-      console.log("📡 [UDP Home] Распакованы данные:", data);
+        if (!message.startsWith("{")) {
+          console.warn("⚠️ [UDP Home] Получено НЕ JSON-сообщение, пропускаем:", message);
+          return;
+        }
 
-      // ✅ Проверяем, есть ли IP, имя и расположение (исправлены названия ключей)
-      if ("ip" in data && ("deviceName" in data || "deviceLocation" in data)) {
-        console.log(`✅ [UDP Home] Обновляем устройство ${data.ip} | Имя: ${data.deviceName} | Расположение: ${data.deviceLocation}`);
+        const data = JSON.parse(message);
+        console.log("📡 [UDP Home] Распакованы данные:", data);
 
-        setDevices((prevDevices) => {
-          const updatedDevices = prevDevices.map((device) => {
-            if (device.ip === data.ip) {
-              return {
-                ...device,
-                name: data.deviceName || device.name,
-                location: data.deviceLocation || device.location,
-                lastSeen: Date.now(),
-              };
-            }
-            return device;
+        if ("ip" in data && ("deviceName" in data || "deviceLocation" in data)) {
+          console.log(`✅ [UDP Home] Обновляем устройство ${data.ip}`);
+
+          setDevices((prevDevices) => {
+            const updatedDevices = prevDevices.map((device) => {
+              if (device.ip === data.ip) {
+                return {
+                  ...device,
+                  name: data.deviceName || device.name,
+                  location: data.deviceLocation || device.location,
+                  lastSeen: Date.now(),
+                };
+              }
+              return device;
+            });
+            return [...updatedDevices];
           });
-          return [...updatedDevices];  // Возвращаем новый массив
-        });
-        
-
-        console.log("✅ [UDP Home] Имя и расположение устройства обновлены.");
-      }
-    } catch (error) {
-      console.error("⛔ Ошибка обработки UDP Home:", error instanceof Error ? error.stack || error.message : JSON.stringify(error));
-    }
-  });
-
-  socket.on("error", (err) => {
-    console.error("⛔ Ошибка UDP Home:", err);
-    if (socketRef.current) {
-      try {
-        socketRef.current.close();
+        }
       } catch (error) {
-        console.warn("⚠️ Ошибка при закрытии сокета:", error);
+        console.error("⛔ Ошибка обработки UDP Home:", error);
       }
-      socketRef.current = null;
-    }
-  });
+    });
 
-  socketRef.current = socket;
-};
-// 🟢 Стартуем слушатель UDP при монтировании HomeScreen
-useEffect(() => {
-  startListeningForDeviceInfoUpdates();
-
-  return () => {
-    if (socketRef.current) {
-      console.log("🔴 Закрываем сокет при размонтировании");
-      try {
-        socketRef.current.close();
-      } catch (error) {
-        console.warn("⚠️ Ошибка при закрытии сокета:", error);
+    socket.on("error", (err) => {
+      console.error("⛔ Ошибка UDP Home:", err);
+      if (socketRef.current) {
+        try {
+          socketRef.current.close();
+        } catch (error) {
+          console.warn("⚠️ Ошибка при закрытии сокета:", error);
+        }
+        socketRef.current = null;
       }
-      socketRef.current = null;
-    }
+    });
+
+    socketRef.current = socket;
   };
-}, []);
- // ✅ Уведомление если не выбраны устройства
- const showDeviceNotSelectedAlert = () => {
-  Alert.alert(
-    "Устройство не выбрано",
-    "Сначала выберите устройство",
-    [{ text: "OK", onPress: () => console.log("OK Pressed") }],
-    { cancelable: false }
-  );
-};
-  // ✅ Загрузка устройств из AsyncStorage
+
+  useEffect(() => {
+    startListeningForDeviceInfoUpdates();
+
+    return () => {
+      if (socketRef.current) {
+        console.log("🔴 Закрываем сокет при размонтировании");
+        try {
+          socketRef.current.close();
+        } catch (error) {
+          console.warn("⚠️ Ошибка при закрытии сокета:", error);
+        }
+        socketRef.current = null;
+      }
+    };
+  }, []);
+
+  const showDeviceNotSelectedAlert = () => {
+    Alert.alert(
+      "Устройство не выбрано",
+      "Сначала выберите устройство",
+      [{ text: "OK" }],
+      { cancelable: false }
+    );
+  };
+
   const loadDevices = async () => {
     try {
       const storedDevices = await AsyncStorage.getItem("devices");
@@ -243,166 +236,171 @@ useEffect(() => {
       console.error("Ошибка загрузки устройств:", error);
     }
   };
-  // ✅ Поиск устройств
-// ✅ Поиск устройств (новая версия)
-const fetchDevices = async () => {
-  if (isScanning) {
-    console.log("⚠️ Поиск уже выполняется.");
-    return;
-  }
 
-  setIsScanning(true);
-  setSearchStatus("📡 Поиск устройств в сети...");
+  const fetchDevices = async () => {
+    if (isScanning) return;
 
-  const socket = dgram.createSocket({ type: "udp4", reusePort: true });
-  socket.bind(4210);
+    setIsScanning(true);
+    setSearchStatus("📡 Поиск устройств в сети...");
 
-  const discoveredIps = new Set(devices.map((d) => d.ip));
+    const socket = dgram.createSocket({ type: "udp4", reusePort: true });
+    socket.bind(4210);
 
-  socket.on("message", (msg, rinfo) => {
-    try {
-      const message = msg.toString().trim();
-      console.log(`📡 [UDP] Получено: ${message} от ${rinfo.address}:${rinfo.port}`);
+    const discoveredIps = new Set(devices.map((d) => d.ip));
 
-      // Игнорируем сообщения, не начинающиеся с JSON
-      if (!message.startsWith("{")) return;
+    socket.on("message", (msg, rinfo) => {
+      try {
+        const message = msg.toString().trim();
+        if (!message.startsWith("{")) return;
 
-      const data = JSON.parse(message);
+        const data = JSON.parse(message);
 
-      if ("ip" in data && "deviceName" in data && "deviceLocation" in data) {
-        const deviceIp = data.ip;
+        if ("ip" in data && "deviceName" in data && "deviceLocation" in data) {
+          const deviceIp = data.ip;
 
-        if (discoveredIps.has(deviceIp)) {
-          // Обновляем уже найденное устройство
-          setDevices((prevDevices) =>
-            prevDevices.map((device) =>
-              device.ip === deviceIp
-                ? {
-                    ...device,
-                    status: "Online",
-                    lastSeen: Date.now(),
-                    name: data.deviceName,
-                    location: data.deviceLocation,
-                  }
-                : device
-            )
-          );
-        } else {
-          // Добавляем новое устройство
-          const newDevice: Device = {
-            ip: deviceIp,
-            name: data.deviceName,
-            location: data.deviceLocation,
-            status: "Online",
-            lastSeen: Date.now(),
-          };
+          if (discoveredIps.has(deviceIp)) {
+            setDevices((prevDevices) =>
+              prevDevices.map((device) =>
+                device.ip === deviceIp
+                  ? {
+                      ...device,
+                      status: "Online",
+                      lastSeen: Date.now(),
+                      name: data.deviceName,
+                      location: data.deviceLocation,
+                    }
+                  : device
+              )
+            );
+          } else {
+            const newDevice: Device = {
+              ip: deviceIp,
+              name: data.deviceName,
+              location: data.deviceLocation,
+              status: "Online",
+              lastSeen: Date.now(),
+            };
 
-          setDevices((prevDevices) => {
-            const updatedDevices = [...prevDevices, newDevice];
-            AsyncStorage.setItem("devices", JSON.stringify(updatedDevices));
-            return updatedDevices;
-          });
+            setDevices((prevDevices) => {
+              const updatedDevices = [...prevDevices, newDevice];
+              AsyncStorage.setItem("devices", JSON.stringify(updatedDevices));
+              return updatedDevices;
+            });
 
-          discoveredIps.add(deviceIp);
+            discoveredIps.add(deviceIp);
+          }
         }
+      } catch (error) {
+        console.error("⛔ Ошибка обработки UDP-сообщения:", error);
       }
-    } catch (error) {
-      console.error("⛔ Ошибка обработки UDP-сообщения:", error);
-    }
-  });
+    });
 
-  socket.on("error", (err) => {
-    console.error("⛔ Ошибка UDP сокета:", err);
-    socket.close();
-  });
+    socket.on("error", (err) => {
+      console.error("⛔ Ошибка UDP сокета:", err);
+      socket.close();
+    });
 
-  setTimeout(() => {
-    setSearchStatus("✅ Поиск завершён!");
-    setIsScanning(false);
-    socket.close();
-    setTimeout(() => setSearchStatus(""), 5000);
-  }, 15000);
-};
+    setTimeout(() => {
+      setSearchStatus("✅ Поиск завершён!");
+      setIsScanning(false);
+      socket.close();
+      setTimeout(() => setSearchStatus(""), 5000);
+    }, 15000);
+  };
 
-
-
-
-  
-const removeDevice = (ip: string) => {
-  Alert.alert("Удаление устройства", "Вы уверены, что хотите удалить это устройство?", [
-    { text: "Отмена", style: "cancel" },
-    {
-      text: "Удалить",
-      style: "destructive",
-      onPress: async () => {
-        console.log("Удаление устройства:", ip);
-        setDevices((prevDevices) => {
-          const newDevices = prevDevices.filter((device) => device.ip !== ip);
-          console.log("После удаления устройств:", newDevices);
-          AsyncStorage.setItem("devices", JSON.stringify(newDevices));
-          return newDevices;
-        });
+  const removeDevice = (ip: string) => {
+    Alert.alert("Удаление устройства", "Вы уверены, что хотите удалить это устройство?", [
+      { text: "Отмена", style: "cancel" },
+      {
+        text: "Удалить",
+        style: "destructive",
+        onPress: async () => {
+          setDevices((prevDevices) => {
+            const newDevices = prevDevices.filter((device) => device.ip !== ip);
+            AsyncStorage.setItem("devices", JSON.stringify(newDevices));
+            return newDevices;
+          });
+        },
       },
-    },
-  ]);
-};
+    ]);
+  };
 
+  useEffect(() => {
+    if (isDemoMode) {
+      const demoDevice: Device = {
+        ip: "0.0.0.0",
+        name: "Демо-устройство",
+        location: "🌐 Симуляция",
+        status: "Online",
+        lastSeen: Date.now(),
+      };
+      setDevices([demoDevice]);
+    }
+  }, [isDemoMode]);
 
-  
-return (
-  <View style={styles.container}>
-    <Text style={styles.title}>Lumi</Text>
-    <Text style={styles.titlesmall}>управление исскуственным окном</Text>
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Lumi</Text>
+      <Text style={styles.titlesmall}>управление искусственным окном</Text>
 
-    <TouchableOpacity style={styles.searchButton} onPress={fetchDevices} disabled={isScanning}>
-      {isScanning ? <ActivityIndicator color="black" /> : <Text style={styles.searchButtonText}>🔍 Поиск устройств</Text>}
-    </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.searchButton]}
+        onPress={() => {
+          const demoDeviceIp = "0.0.0.0";
+          setIsDemoMode(true);
+          updateSelectedDevice(demoDeviceIp);
+          navigation.navigate("Modes", { deviceIp: demoDeviceIp, isDemoMode: true });
+        }}
+      >
+        <Text style={styles.searchButtonText}>Демо-режим</Text>
+      </TouchableOpacity>
 
-    {searchStatus ? <Text style={styles.statusText}>{searchStatus}</Text> : null}
+      <TouchableOpacity style={styles.searchButton} onPress={fetchDevices} disabled={isScanning}>
+        {isScanning ? <ActivityIndicator color="black" /> : <Text style={styles.searchButtonText}>🔍 Поиск устройств</Text>}
+      </TouchableOpacity>
 
-    {/* 🔥 Делаем список устройств прокручиваемым */}
-    <View style={styles.devicesContainer}>
-      <Text style={styles.devicesHeader}>Найденные устройства</Text>
+      {searchStatus ? <Text style={styles.statusText}>{searchStatus}</Text> : null}
 
-      <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
-        <FlatList
-          data={devices}
-          keyExtractor={(item) => item.ip}
-          renderItem={({ item }) => (
-            <View
-              style={[
-                styles.deviceCard,
-                item.status === "Offline" && styles.deviceCardOffline,
-                selectedDevice === item.ip && styles.deviceCardSelected,
-              ]}
-            >
-              {/* Кнопка удаления (❌) */}
-              <TouchableOpacity style={styles.deleteButton} onPress={() => removeDevice(item.ip)}>
-                <Text style={styles.deleteButtonText}>✖</Text>
-              </TouchableOpacity>
+      <View style={styles.devicesContainer}>
+        <Text style={styles.devicesHeader}>Найденные устройства</Text>
 
-              {/* Контейнер с информацией */}
-              <TouchableOpacity
-                style={styles.deviceInfoContainer}
-                onPress={() => selectDevice(item.ip)}
-                disabled={item.status === "Offline"}
+        <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
+          <FlatList
+            data={devices}
+            keyExtractor={(item) => item.ip}
+            renderItem={({ item }) => (
+              <View
+                style={[
+                  styles.deviceCard,
+                  item.status === "Offline" && styles.deviceCardOffline,
+                  selectedDevice === item.ip && styles.deviceCardSelected,
+                ]}
               >
-                <Text style={styles.deviceName}>{item.name}</Text>
-                <Text style={styles.deviceText}>{item.location}</Text>
-                <Text style={styles.deviceText}>{item.ip}</Text>
-                <Text style={[styles.onlineText, item.status === "Offline" && styles.offlineText]}>
-                  {item.status}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
-          ListEmptyComponent={<Text style={styles.noDevices}>Нет найденных устройств</Text>}
-          scrollEnabled={false} // ✅ Отключаем встроенный скролл
-        />
-      </ScrollView>
+                <TouchableOpacity style={styles.deleteButton} onPress={() => removeDevice(item.ip)}>
+                  <Text style={styles.deleteButtonText}>✖</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.deviceInfoContainer}
+                  onPress={() => selectDevice(item.ip)}
+                  disabled={item.status === "Offline"}
+                >
+                  <Text style={styles.deviceName}>{item.name}</Text>
+                  <Text style={styles.deviceText}>{item.location}</Text>
+                  <Text style={styles.deviceText}>{item.ip}</Text>
+                  <Text style={[styles.onlineText, item.status === "Offline" && styles.offlineText]}>
+                    {item.status}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            ListEmptyComponent={<Text style={styles.noDevices}>Нет найденных устройств</Text>}
+            scrollEnabled={false}
+          />
+        </ScrollView>
+      </View>
     </View>
-  </View>
-);
+  );
 };
 
 const styles = StyleSheet.create({
